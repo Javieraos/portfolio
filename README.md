@@ -5,4 +5,4 @@ Here you can find my work as data scientist. I'm will be adding projects as I le
 
 # Projects
 
-1. <a href="https://www.mozilla.org/es-ES/">la página de inicio de Mozilla</a>. Quick scattter plot of life expectancy and per capita income
+1. Quick scattter plot of life expectancy and per capita income: <a href="https://github.com/Javieraos/portfolio/blob/main/scatter.ipynb"> here </a>

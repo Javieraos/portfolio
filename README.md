@@ -6,3 +6,4 @@ Here you can find my work as data scientist. I'm will be adding projects as I le
 # Projects
 
 1. Quick scattter plot of life expectancy and per capita income: <a href="https://github.com/Javieraos/portfolio/blob/main/scatter.ipynb"> here </a>
+2. Statistical analysis of the width's skull in different periods: <a href="https://github.com/Javieraos/portfolio/blob/main/Tarea_Estadistica_Javier_Aos.pdf"> here </a>

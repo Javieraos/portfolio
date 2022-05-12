@@ -5,4 +5,4 @@ Here you can find my work as data scientist. I'm will be adding projects as I le
 
 # Projects
 
-
+1. Quick scattter plot of life expectancy and per capita income

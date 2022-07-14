@@ -1,0 +1,607 @@
+---
+title: "Tarea 1: ¡Cliente a la fuga!"
+author: "Javier Aos Aragonés"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 1. Lectura e inspección de datos
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+# Seleccionamos el directorio de trabajo
+setwd("G:/My Drive/1.3 Master/Modules/08_Data_mining/TareaI")
+# Cargamos las funciones
+source("Funciones_R.R")
+# Cargamos paquetes necesarios
+paquetes(c('questionr','psych','car','corrplot','ggplot2','gridExtra',
+           'kableExtra','dplyr','DMwR2','caret','pROC','stats','glmnet',
+           'epiDisplay'))
+```
+
+```{r, results='hide'}
+# Seleccionamos el directorio de trabajo
+df <- readRDS("FugaClientes_Training.RDS")
+str(df)
+```
+
+Lo primero que vemos es que la variable 'ID' está configurada como factor cuando todas sus observaciones son distintas entre sí. Ya que sus todo están compuestos tanto de números como de letras vamos a convertirla en una cadena de texto, aunque realmente no la vamos a usar en el modelo ya que no nos aporta información predictiva. Por lo demás, todas las variables parecen estar en su configuración correcta.
+
+```{r}
+df$ID <- as.character(df$ID) 
+sapply(Filter(is.numeric, df),function(x) length(unique(x)))
+# Comprobamos que las numéricas realmente lo sean
+```
+
+```{r results='hide'}
+# Comprobamos rápidamente la distribución de las variables
+summary(df)
+```
+
+En principio no vemos nada raro en la distribución de las variables. Quizás lo más llamativo podría ser el máximo de antigüedad de 72 años, aunque no tendría porqué ser un dato atípico o un error ya que perfectamente se podría dar la situación. Lo que también observamos rápidamente es que la mayoría de variables tienes todo perdidos, luego lo veremos con más detalle.
+
+Como no se detectan errores graves vamos a pasar con el análisis de valores atípicos y perdidos. Primero separaremos la variable objetivo y crearemos un nuevo conjunto de todo sin ella.
+
+```{r}
+varObjBin<-df$Fuga
+input<-as.data.frame(df[,-(21)])
+```
+
+# 2. Depuración de los datos
+
+## Valores atípicos
+
+```{r}
+t<-data.frame(sort(
+  round(sapply(Filter(
+    is.numeric, input),function(nOut) atipicosAmissing(
+      nOut)[[2]])/nrow(input)*100,3), decreasing = T))
+names(t)<-"% Outliers por variable"
+head(t, 5)
+```
+
+Como podemos ver no se detectan valores atípicos en las variables numéricas.
+
+## Valores perdidos
+
+```{r fig.width=3, fig.height=3}
+# Vemos la relación de missings
+corrplot(cor(is.na(input[colnames(
+  input)[colSums(is.na(input))>0]])),method = "number",type = "upper")
+```
+
+Vemos que no existe ningún patrón de correlación entre los valores perdidos.
+
+```{r}
+# Missing por variable
+prop_missingsVars <- apply(is.na(input),2,mean)
+t <- data.frame(sort(prop_missingsVars*100, decreasing = T))
+names(t)<-"% Missing por Variable"
+head(t, 10)
+```
+
+Los valores perdidos no son extremadamente altos, por lo que los vamos a imputar por valores aleatorios.
+
+```{r}
+# Missing por observación
+input$prop_missings<-apply(is.na(input),1,mean)
+summary(input$prop_missings)
+```
+
+No hay observaciones con más de un 50% de valores perdidos, entonces conservamos todas.
+
+```{r}
+# Imputamos las cuantitativas
+input[,as.vector(which(sapply(input, class)=="numeric"))]<-sapply(
+  Filter(is.numeric, input),function(x) ImputacionCuant(x,"aleatorio"))
+```
+
+```{r}
+# Imputamos las cualitativas
+input[,as.vector(which(sapply(input, class)=="factor"))]<-sapply(
+  Filter(is.factor, input),function(x) ImputacionCuali(x,"aleatorio"))
+```
+
+```{r}
+# Volvemos a pasar a factor los chr
+input[,as.vector(which(sapply(input, class)=="character"))] <- lapply(
+  input[,as.vector(which(sapply(input, class)=="character"))] , factor)
+input$ID <- as.character(input$ID)
+```
+
+```{r}
+# Reviso que no queden todo missings
+sum(is.na(input))
+```
+
+```{r}
+# Volvemos a pasar el código para los missing que quedan
+if (any(is.na(input))){
+input[,as.vector(which(sapply(input, class)=="numeric"))]<-sapply(
+  Filter(is.numeric, input),function(x) ImputacionCuant(x,"aleatorio"))
+# Reviso que no queden todo missings
+sum(is.na(input))
+}
+```
+
+```{r}
+# Guardamos el archivo depurado
+saveRDS(cbind(varObjBin,input),"todoFugaDep.RDS")
+```
+
+# 3. Estudio de variables y relaciones con la variable objetivo
+
+```{r}
+# Creamos dos variables aleatorias de control
+input$aleatorio<-runif(nrow(input))
+input$aleatorio2<-runif(nrow(input))
+```
+
+```{r, warning=FALSE, fig.width=5, fig.height=2}
+graficoVcramer(input[,-1],varObjBin)
+```
+
+```{r warning=FALSE, results='hide'}
+# Buscamos las mejores transformaciones
+input_bin<-cbind(input,Transf_Auto(Filter(is.numeric, input),varObjBin))
+# Guardamos el dataset con las tranformaciones
+todo_bin<-data.frame(input_bin,varObjBin)
+saveRDS(todo_bin,"todo_bin_Vino.RDS")
+```
+
+```{r, warning=FALSE, fig.width=5, fig.height=2}
+graficoVcramer(input_bin[,-1],varObjBin) # Importancia de las transformaciones
+```
+
+Vemos que las transformaciones no mejoran demasiado la importancia de ninguna variable.
+
+```{r}
+todo <- todo_bin
+freq(todo$varObjBin)
+```
+
+Como podemos ver, en este caso, tenemos un desbalanceo hacia los 0 ya que su frecuencia representa el 73.5%. Esto quiere decir, que el modelo tendrá mayor dificultad en reconocer los 1 ya que posee menos información de ellos. Hay que tener cuidado si vemos que obtenemos una precisión del 73% mirando la sensibilidad y especificidad para comprobar el correcto funcionamiento del modelo.
+
+```{r}
+set.seed(123456)
+trainIndex <- createDataPartition(todo$varObjBin, p=0.8, list=FALSE)
+data_train <- todo[trainIndex,c(2:23,30)]
+data_test <- todo[-trainIndex,c(2:23,30)]
+
+freq(data_train$varObjBin)
+freq(data_test$varObjBin)
+```
+
+# 4. Modelado manual
+
+```{r}
+# Creamos un modelo inicial completo
+modeloInicial<-glm(varObjBin~.,data=data_train,family=binomial)
+pseudoR2(modeloInicial,data_train,"varObjBin")
+pseudoR2(modeloInicial,data_test,"varObjBin")
+modeloInicial$rank #número de parámetros
+```
+
+Vemos que el modelo baja mucho su R2 en test, generaliza mal, probablemente sobrestima en train.
+
+```{r, warning=FALSE, fig.width=5, fig.height=3}
+impVariablesLog(modeloInicial,"varObjBin") 
+```
+
+```{r}
+# Modelo con las variables más importantes
+modelo2<-glm(varObjBin~Contrato+Int_serv+Antig.fc.edad,
+             data=data_train,family=binomial)
+```
+
+```{r}
+modelo3<-glm(varObjBin~Contrato*Antig.fc.edad+Int_serv,
+             data=data_train,family=binomial)
+pseudoR2(modelo3,data_train,"varObjBin")
+pseudoR2(modelo3,data_test,"varObjBin")
+modelo3$rank
+```
+
+El modelo mejora mínimamente, pero vemos que existe un efecto potenciador interesante para la variable Contrato.
+
+```{r}
+modelo4<-glm(varObjBin~Contrato+Antig.fc.edad+Int_serv+Seguridad+Fact_sinPapel,
+             data=data_train,family=binomial)
+```
+
+```{r}
+modelo5<-glm(varObjBin~Contrato+Antig.fc.edad+Int_serv+Seguridad+Fact_sinPapel+Telf_serv+MetodoPago+Soporte_tecnico,
+             data=data_train,family=binomial)
+```
+
+```{r}
+modelo6<-glm(varObjBin~Contrato+Antig.fc.edad+Int_serv+Seguridad+Fact_sinPapel+Telf_serv+MetodoPago+Soporte_tecnico+VariasLineas+TV_streaming+Mayor65,data=data_train,family=binomial)
+```
+
+```{r}
+modelo7<-glm(varObjBin~Contrato+Antig.fc.edad+Int_serv+Seguridad+Fact_sinPapel+Telf_serv+MetodoPago+Soporte_tecnico+VariasLineas+TV_streaming+Mayor65+CopiaSeguridad+FacturaMes+FacturaTotal,data=data_train,family=binomial)
+pseudoR2(modelo7,data_train,"varObjBin")
+pseudoR2(modelo7,data_test,"varObjBin")
+modelo7$rank
+```
+
+Aquí vemos que conseguimos prácticamente los mismos R2 que en el modelo completo pero con 19 variables en vez de 27.
+
+```{r}
+modelo8<-glm(varObjBin~Contrato+Antig.fc.edad+Int_serv+Seguridad+Fact_sinPapel+Telf_serv+MetodoPago+Soporte_tecnico+VariasLineas+TV_streaming+Mayor65+CopiaSeguridad+FacturaMes+FacturaTotal+Peliculas+PersCargo,data=data_train,family=binomial)
+```
+
+```{r}
+modelo9<-glm(varObjBin~Contrato*Antig.fc.edad+Int_serv+Seguridad+Fact_sinPapel+Telf_serv+MetodoPago+Soporte_tecnico+VariasLineas+TV_streaming+Mayor65+CopiaSeguridad+FacturaMes+FacturaTotal+Peliculas+PersCargo,data=data_train,family=binomial)
+pseudoR2(modelo9,data_train,"varObjBin")
+pseudoR2(modelo9,data_test,"varObjBin")
+modelo9$rank
+```
+
+Aquí vemos que incluso superamos al modelo completo pero con menos variables.
+
+# 5. Modelado por selección de variables
+
+## Selección de variables clásica
+
+### Variables
+
+En primer lugar, vamos a cargar los todo y crear las particiones.
+
+```{r}
+# Hago la partición con las transformaciones
+set.seed(123456)
+trainIndex <- createDataPartition(todo$varObjBin, p=0.8, list=FALSE)
+data_train <- todo[trainIndex,]
+data_test <- todo[-trainIndex,]
+```
+
+Ahora vamos a crear un modelo vacío y otro completo
+
+```{r warning=FALSE}
+null<-glm(varObjBin~1, data=data_train, family = binomial) # Modelo vacío
+full<-glm(varObjBin~., data=data_train[,c(2:23,30)], family = binomial) # Modelo completo
+```
+
+```{r}
+modeloStepAIC <- step(null, scope=list(lower=null, upper=full), direction="both", trace = F)
+```
+
+```{r}
+modeloBackAIC<-step(full, scope=list(lower=null, upper=full), direction="backward", trace = F)
+```
+
+```{r}
+modeloStepBIC<-step(null, scope=list(lower=null, upper=full), direction="both",k=log(nrow(data_train)), trace = F)
+```
+
+### Variables + interacciones
+
+```{r warning=FALSE}
+formInt <- formulaInteracciones(todo[,c(2:23,30)],23)
+fullInt <- glm(formInt, data=data_train, family = binomial) # Modelo completo
+```
+
+```{r warning=FALSE}
+modeloStepAIC_int <- step(null, scope=list(lower=null, upper=fullInt), direction="both", trace = F, steps = 50)
+```
+
+```{r warning=FALSE}
+modeloStepBIC_int <- step(null, scope=list(lower=null, upper=fullInt), direction="both",k=log(nrow(data_train)), trace = F, steps = 30)
+```
+
+### Variables + transformaciones
+
+```{r warning=FALSE}
+fullT <- glm(varObjBin~. -ID, data = data_train, family = binomial)
+
+modeloStepAIC_trans<-step(null, scope=list(lower=null, upper=fullT), direction="both", trace = F)
+```
+
+```{r warning=FALSE}
+modeloStepBIC_trans<-step(null, scope=list(lower=null, upper=fullT), direction="both",k=log(nrow(data_train)), trace = F)
+```
+
+### Variables + transformaciones + interacciones
+
+```{r warning=FALSE}
+formIntT<-formulaInteracciones(todo[,c(-1)],29)
+fullIntT<-glm(formIntT, data=data_train, family = binomial)
+```
+
+```{r warning=FALSE}
+modeloStepAIC_transInt<-step(null, scope=list(lower=null, upper=fullIntT), direction="both", trace = F)
+```
+
+```{r warning=FALSE}
+modeloStepBIC_transInt<-step(null, scope=list(lower=null, upper=fullIntT), direction="both",k=log(nrow(data_train)), trace = F)
+```
+
+## Selección de variables aleatorias
+
+```{r warning=FALSE, results='hide'}
+rep<-20
+prop<-0.7
+modelosGenerados<-c()
+for (i in 1:rep){
+  set.seed(12345+i)
+  subsample<-data_train[sample(1:nrow(data_train),prop*nrow(data_train),replace = T),]
+  full<-glm(formIntT,data=subsample,family=binomial)
+  null<-glm(varObjBin~1,data=subsample,family=binomial)
+  modeloAux<-step(null,scope=list(lower=null,upper=full),direction="both",trace=0,k=log(nrow(subsample)))
+  modelosGenerados<-c(modelosGenerados,paste(sort(unlist(strsplit(as.character(formula(modeloAux))[3]," [+] "))),collapse = "+"))
+}
+(freq(modelosGenerados,sort="dec")->fr)
+```
+
+```{r}
+modeloAleatorio1<-glm(varObjBin~Contrato+Fact_sinPapel+Int_serv+Mayor65+Peliculas+raiz4FacturaTotal+Seguridad+TV_streaming+VariasLineas,data=data_train,family=binomial)
+```
+
+```{r}
+modeloAleatorio2<-glm(varObjBin~Contrato+Fact_sinPapel+Int_serv+Peliculas+raiz4FacturaTotal+Seguridad+Soporte_tecnico+TV_streaming+VariasLineas,data=data_train,family=binomial)
+```
+
+```{r}
+modeloAleatorio3<-glm(varObjBin~Contrato+CopiaSeguridad+Fact_sinPapel+Int_serv+Mayor65+Peliculas+raiz4FacturaTotal+Seguridad+TV_streaming+VariasLineas,data=data_train,family=binomial)
+```
+
+## Selección de variables por Lasso
+
+```{r warning=FALSE, results='hide'}
+y <- as.double(as.matrix(data_train[, 30]))
+x<-model.matrix(varObjBin~.-ID, data=data_train)[,-1] #no cambiar el -1
+set.seed(1712)
+cv.lasso <- cv.glmnet(x,y,nfolds=5)
+```
+
+```{r warning=FALSE, results='hide'}
+(betas<-coef(cv.lasso, s=cv.lasso$lambda.1se))
+```
+
+# 6. Comparación de modelos por validación cruzada repetida
+
+## Mejor modelo manual
+
+```{r, results='hide', fig.width=5, fig.height=3.5}
+# Copia de la variable original
+auxVarObj <- todo$varObjBin
+
+# Formateo la variable objetivo para que funcione el código
+todo$varObjBin <-  make.names(todo$varObjBin)
+
+total<-c()
+modelos<-sapply(list(modeloInicial,modelo2,modelo3,modelo4,modelo5,modelo6,modelo7,modelo8,modelo9),formula)
+for (i in 1:length(modelos)){
+  set.seed(1712)
+  vcr<-train(as.formula(modelos[[i]]), data = todo,
+             method = "glm", family="binomial",metric = "ROC",
+             trControl = trainControl(method="repeatedcv", number=5, repeats=20,
+                                      summaryFunction=twoClassSummary,
+                                      classProbs=TRUE,returnResamp="all")
+  )
+  total<-rbind(total,data.frame(roc=vcr$resample[,1],modelo=rep(paste("Modelo",i),
+                                                                  nrow(vcr$resample))))
+}
+boxplot(roc~modelo,data=total,main="Área bajo la curva ROC") 
+```
+
+```{r}
+aggregate(roc~modelo, data = total, mean)
+aggregate(roc~modelo, data = total, sd)
+```
+
+```{r}
+car::vif(modelo5)
+```
+
+Nos quedamos con el modelo 5, ya que a partir de ese modelo, los siguientes presentan un aumento mínimo del ROC, aumentando el número de variables. Por el principio de parsimonia, nos quedamos con el modelo que mayor aumento nos brinda con el mínimo número de parámetros, en este caso el modelo 5 con 13 variables.
+
+## Mejor modelo por selección de variables clásica
+
+```{r results='hide', fig.width=5, fig.height=3.5}
+total<-c()
+modelos<-sapply(list(modelo5,modeloStepAIC,modeloStepBIC,modeloStepBIC_int,
+                     modeloStepAIC_trans,modeloStepBIC_trans,modeloStepAIC_transInt,modeloStepBIC_transInt),formula)
+for (i in 1:length(modelos)){
+  set.seed(1712)
+  vcr<-train(as.formula(modelos[[i]]), data = todo,
+             method = "glm", family="binomial",metric = "ROC",
+             trControl = trainControl(method="repeatedcv", number=5, repeats=20,
+                                      summaryFunction=twoClassSummary,
+                                      classProbs=TRUE,returnResamp="all")
+  )
+  total<-rbind(total,data.frame(roc=vcr$resample[,1],modelo=rep(paste("Modelo",i),
+                                                                  nrow(vcr$resample))))
+}
+boxplot(roc~modelo,data=total,main="Área bajo la curva ROC") 
+```
+
+```{r}
+aggregate(roc~modelo, data = total, mean)
+aggregate(roc~modelo, data = total, sd)
+```
+
+Los 2 mejores modelos son el 5 y 7, según el ROC.
+
+```{r}
+length(coef(modeloStepAIC_trans))
+length(coef(modeloStepAIC_transInt))
+length(coef(modeloStepBIC_transInt))
+length(coef(modeloStepBIC_trans))
+```
+
+Sin embargo vemos que tanto el modelo 6 como el 8 (que son el mismo) tan solo con 12 parámetros se acercan mucho al ROC de los otros dos. Aplicando de nuevo el principio de parsimonia, seleccionamos el modelo 8 "modeloStepBIC_transInt".
+
+Vamos a crear el mismo modelo pero sin la transformación raiz4FacturaTotal para ver si aporta mucho poco al ROC y así simplificar algo la interpretación.
+
+```{r}
+modeloStepBIC_transInt2 <- glm(varObjBin ~ Contrato + Int_serv + FacturaTotal + TV_streaming + 
+    VariasLineas + Fact_sinPapel + Peliculas + Seguridad + Mayor65,data=data_train,family=binomial)
+pseudoR2(modeloStepBIC_transInt2,data_test,"varObjBin")
+pseudoR2(modeloStepBIC_transInt,data_test,"varObjBin")
+```
+
+## Mejor modelo por selección de variables aleatoria y Lasso
+
+```{r results='hide', fig.width=5, fig.height=3.5}
+auxVarObj_train <- data_train$varObjBin
+data_train$varObjBin <- make.names(data_train$varObjBin)
+total2<-c()
+modelos2<-sapply(list(modelo5,modeloStepBIC_transInt,modeloStepBIC_transInt2,modeloAleatorio1,modeloAleatorio2,modeloAleatorio3),formula)
+for (i in 1:length(modelos2)){
+  set.seed(1712)
+  vcr<-train(as.formula(modelos[[i]]), data = data_train,
+             method = "glm", family="binomial",metric = "ROC",
+             trControl = trainControl(method="repeatedcv", number=5, repeats=20,
+                                      summaryFunction=twoClassSummary,
+                                      classProbs=TRUE,returnResamp="all")
+  )
+  total2<-rbind(total2,cbind(vcr$resample[,1:2],modelo=rep(paste("Modelo",i),
+                                                         nrow(vcr$resample))))
+}
+set.seed(1712)
+lassovcr <- train(varObjBin ~ . -ID, data = data_train,
+                  method = "glmnet",family="binomial",metric="ROC",
+                  tuneGrid=expand.grid(.alpha=1,.lambda=cv.lasso$lambda.1se),
+                  trControl = trainControl(method="repeatedcv", number=5, repeats=20,
+                                           returnResamp="all",summaryFunction=twoClassSummary,classProbs=TRUE)
+)
+total2<-rbind(total2,cbind(lassovcr$resample[,1:2],modelo=rep("LASSO",
+                                                         nrow(vcr$resample))))
+
+boxplot(formula=ROC~modelo,data=total2,main="Área bajo curva ROC")
+```
+
+```{r}
+aggregate(ROC~modelo, data = total2, mean)
+aggregate(ROC~modelo, data = total2, sd)
+```
+
+Vemos que la mayoría tienen un ROC parecido siendo el mejor modelo el 5.
+
+```{r}
+formula(modeloStepBIC_transInt2)
+```
+
+# 7. Elección del modelo final
+
+Vemos que el modelo aleatorio 2 consigue un ROC de 0.85 con el mismo número de variables que el modeloStepBIC_transInt2, el problema es que en el modelo aleatorio 2 se incluye la transformación de la raiz4FacturaTotal, mientras en en el modeloStepBIC_transInt2 se incluye la variable sin transformar, lo que hace mucho más facil su posterior interpretación. Si a esto le sumamos que el ROC tan solo gana un 0.01 con la variable transformada, vamos a seleccionar como modelo final el modeloStepBIC_transInt2.
+
+# 8. Evaluación e interpretación de parámetros
+
+Ajustamos el modelo final a todos los todo disponibles para su interpretación.
+
+```{r}
+todo$varObjBin <- auxVarObj
+modelofinal <- glm(formula(modeloStepBIC_transInt2), data=todo, family=binomial)
+pseudoR2(modelofinal,todo,"varObjBin")
+car::vif(modelofinal)
+```
+
+```{r}
+epiDisplay::logistic.display(modelofinal)
+```
+
+Viendo el modelo final podemos sacar las siguientes conclusiones:
+
+* La probabilidad de fuga respecto a no fuga de un cliente con contrato de un año 0.44 veces la correspondiente a clientes con contrato mes a mes. Es decir, La probabilidad de fuga respecto a no fuga se reduce un 56% en clientes con contrato de un año respecto a clientes con contrato mensual.
+* En el mismo caso para clientes con contrato de dos años, la probabilidad de fuga se reduce en un 80% frente a los clientes con contrato mensual. Aquí vemos que cuanto mayor el tiempo del contrato menor es la probabilidad de fuga.
+* La probabilidad de fuga respecto a no fuga de un cliente con contrato de fibra óptica es 2.95 veces la correspondiente a clientes con contrato de DSL. Es decir, la probabilidad de fuga aumenta un 295% si el cliente tiene contratada fibra óptica con respecto a DSL.
+* La probabilidad de fuga respecto a no fuga de un cliente sin contrato de Internet es 0.38 veces la correspondiente a clientes con contrato DSL. Es decir, un cliente sin contrato de Internet tiene un 62% menos probabilidad de fugarse que uno con contrato de Internet DSL.
+* El aumento unitario de la Factura Total disminuye el odds del evento en un 0,0004%, pudiendo variar entre 0,0005% y 0,0004% con el 95% de confianza.
+* La probabilidad de fuga es 1.49 veces mayor en clientes con TV en streaming contratado que en clientes sin el servicio.
+* La probabilidad de fuga es 1.34 veces mayor en clientes con varias líneas de teléfono frente a los clientes con solo una línea.
+* La probabilidad de fuga es 1.5 veces mayor en clientes con factura sin papel que en los clientes con factura en papel.
+* La probabilidad de fuga es 1.42 veces mayor en clientes con el servicio de películas contratado que en clientes sin el servicio.
+* La probabilidad de fuga es 0.64 veces mayor en clientes con servicio de seguridad contratado que en clientes sin el servicio.
+* La probabilidad de fuga es 1.33 veces mayor en clientes con más de 65 años que en clientes con menos edad.
+
+
+# 9. Búsqueda del punto de corte óptimo para la probabilidad estimada
+
+```{r fig.width=5, fig.height=3}
+# Gráfico de las probabilidades obtenidas
+hist_targetbinaria(predict(modeloStepBIC_transInt2, newdata=data_test,type="response"),data_test$varObjBin,"probabilidad")
+```
+
+Parece que al modelo le irá bien reconociendo a los ceros (área roja) que como ya vimos que eran mayor porcentaje. En cambio, para los unos, que teníamos una menor representación, vemos que al modelo le cuesta más reconocerlos.
+
+```{r}
+# Probamos dos puntos de corte
+sensEspCorte(modeloStepBIC_transInt,data_test,"varObjBin",0.5,"1")
+sensEspCorte(modeloStepBIC_transInt,data_test,"varObjBin",0.27,"1")
+```
+
+```{r warning=FALSE, results='hide'}
+# Generamos una rejilla de puntos de corte
+posiblesCortes <- seq(0,1,0.01)
+rejilla <- data.frame(t(rbind(posiblesCortes,sapply(posiblesCortes,function(x) sensEspCorte(modeloStepBIC_transInt2,data_test,"varObjBin",x,"1")))))
+rejilla$Youden <- rejilla$Sensitivity+rejilla$Specificity-1
+```
+
+```{r}
+rejilla$posiblesCortes[which.max(rejilla$Youden)]
+rejilla$posiblesCortes[which.max(rejilla$Accuracy)]
+```
+
+```{r}
+sensEspCorte(modeloStepBIC_transInt2,data_test,"varObjBin",0.26,"1")
+sensEspCorte(modeloStepBIC_transInt2,data_test,"varObjBin",0.53,"1")
+```
+
+```{r}
+# Evaluamos la estabilidad del modelo a partir de las diferencias en train y test:
+todo$varObjBin <- auxVarObj
+data_train$varObjBin <- auxVarObj_train
+pseudoR2(modeloStepBIC_transInt2,data_train,"varObjBin")
+pseudoR2(modeloStepBIC_transInt2,data_test,"varObjBin")
+```
+
+Vemos que el modelo no parece muy estable ya que pierde bastante pseudoR2 para los datos de test frente a los de train.
+
+```{r}
+roc(data_train$varObjBin, predict(modeloStepBIC_transInt2,data_train,type = "response"), direction="<")
+roc(data_test$varObjBin, predict(modeloStepBIC_transInt2,data_test,type = "response"), direction="<")
+```
+
+```{r}
+sensEspCorte(modeloStepBIC_transInt2,data_train,"varObjBin",0.26,"1")
+sensEspCorte(modeloStepBIC_transInt2,data_test,"varObjBin",0.26,"1")
+```
+
+# 10. Predicción para los datos de test
+
+```{r}
+# Generar el factor con las clases estimadas en test
+pred_test <- factor(ifelse(predict(modeloStepBIC_transInt2,data_test,type = "response")>0.26,1,0))
+
+# Tablas marginales
+table(pred_test)
+```
+```{r}
+# Matriz de confusión
+confusionMatrix(pred_test,data_test$varObjBin, positive = '1')
+```
+
+# 11. Construcción del dataset de entrega con el ID y Fuga_pred
+
+```{r}
+data_train <- todo
+data_test <- readRDS("FugaClientes_test.RDS")
+data_test$Mayor65 <- as.factor(data_test$Mayor65)
+```
+
+```{r}
+probs <- predict(modelofinal, data_test, type='response')
+data_test$Fuga_pred <- factor(ifelse(probs>0.26, 1, 0))
+FugaPredict_JavierAos <- data_test %>% dplyr::select(ID, Fuga_pred)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+saveRDS(FugaPredict_JavierAos, "Predicts.RDS")
+```

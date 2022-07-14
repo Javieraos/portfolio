@@ -1,0 +1,205 @@
+---
+title: "Reducción de dimensiones y clustering"
+author: "Javier Aos"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Parte 2: Técnicas no supervisadas
+
+```{r include=FALSE, results='hide'}
+setwd("G:/My Drive/1.3 Master/Modules/08_Data_mining/TareaII")
+source("G:/My Drive/1.3 Master/Modules/08_Data_mining/Funciones_R.R")
+paquetes(c("qgraph","devtools", "FactoMineR", "RcmdrMisc","GPArotation"))
+source("G:/My Drive/1.3 Master/Modules/08_Data_mining/Funciones_Clust.R")
+paquetes(c("factoextra","cluster","fpc", "clValid"))
+```
+
+```{r warning=FALSE, include=FALSE, results='hide'}
+library(devtools)
+install_github("vqv/ggbiplot")
+library(ggbiplot)
+```
+
+## Lectura y depuración del dataset
+
+```{r message=FALSE, warning=FALSE, results='hide'}
+elec <- readxl::read_excel(
+  "G:/My Drive/1.3 Master/Modules/08_Data_mining/Datos/DatosEleccionesEspaña.xlsx")
+```
+
+```{r warning=FALSE, results='hide'}
+# Ciudades con más de 100000 habitantes
+elec_r2<-na.omit(elec[elec$Population >100000 & elec$Population <500000,])
+
+# Selecciono las numéricas
+elec_r<-Filter(is.numeric, elec_r2)[,-1] # Elimino Código de provincia
+rownames(elec_r)<-elec_r2$Name
+names(elec_r[-c(1,2,32)])
+names(elec_r)<-c(
+  "Pop", "Cens", "Abs", "AbsA" , "Izda",   "Dcha",   "Otr",  "IzqA",  "DechA",   
+"Age4",    "Age19","Age19_65",  "Age65",  "WomP", "Forei", "SameCom","SCDifProv",  "DifCom",
+ "UnL25", "Un25_40" , "UnM40" , "AgrU" , "IndU"   ,  "ConsU", "ServU"  ,   "Empr",   "Indus", 
+"Const",    "ComHost" , "Servi", "inmuebles",  "Pob2010",    "SUPERFICIE",   
+"PobChange",   "PersInm","Explot" )
+
+# Elimino las variables de población y dicótomas
+elec_r<-elec_r[,-c(1,2,4,8,9,32)]
+```
+
+## Seleccionamos las 10 variables con mayor MSA
+
+```{r}
+# Eliminamos las variables que producen un error de colinealidad
+x<-psych::KMO(elec_r[,c(5:12,22:29)])
+sort(x$MSAi, decreasing = TRUE)
+```
+
+```{r warning=FALSE}
+# Seleccionamos las 10 variables con un MSA más alto
+elec_r<-elec_r[,c(
+  'WomP','Age4','Const','Indus','inmuebles','PobChange','PersInm','ComHost',
+  'Servi','SCDifProv')]
+elec_r$CCAA<-elec_r2$CCAA
+rownames(elec_r)<-elec_r2$Name
+```
+
+## Agregamos valores por CCAA
+
+```{r warning=FALSE}
+ccaa<-aggregate(.~CCAA,elec_r,mean)
+rownames(ccaa)<-ccaa$CCAA
+ccaa<-ccaa[,-1]
+```
+
+## Escalamos datos ya que hay distintas unidades de medida
+
+```{r warning=FALSE}
+ccaa.sc<-scale(ccaa)
+```
+
+## Exploramos clustering jerárquico con distintos Linkages
+
+```{r warning=FALSE}
+methods<-c("complete","average",'ward.D2')
+hclist<-list()
+val.hc<-c()
+for (i in 1:length(methods)){
+  hc=hclust(dist(ccaa.sc),method =methods[i])
+  hclist[[i]]<-hc
+ print(fviz_dend(hc,k = 4, cex = 0.5, color_labels_by_k = T, rect = T)+
+         ggtitle(paste('Linkage ', methods[i])))
+ #Validación interna
+ cl<-cutree(hc, k = 4) 
+ md.val<-medidasVal(ccaa.sc,cl,cl,methods[i])
+ 
+ # Generar vector de medidas de validación
+ val.hc<- rbind(val.hc,md.val)
+}
+
+names(hclist) <- rownames(val.hc)<-methods
+```
+
+## Exploramos k-means con 4 grupos
+
+```{r warning=FALSE}
+km.out=kmeans(ccaa.sc,4)
+fviz_cluster(km.out, data = ccaa.sc,  ellipse.type = "convex", palette = "jco",repel = TRUE,
+             ggtheme = theme_minimal())
+```
+
+## Intentamos unir fuerzas con método híbrido (hkmeans)
+
+```{r warning=FALSE}
+hk.out=hkmeans(ccaa.sc,4)
+
+hkmeans_tree(hk.out, cex = 0.6)
+fviz_cluster(hk.out, data = ccaa.sc,  ellipse.type = "convex", palette = "jco",repel = TRUE,
+             ggtheme = theme_minimal())
+```
+
+### Medidas de validación
+
+```{r warning=FALSE}
+md.km<-medidasVal(ccaa.sc,km.out$cluster,km.out$cluster,'kmeans')
+md.hk<-medidasVal(ccaa.sc,hk.out$cluster,hk.out$cluster,'hkmeans') ## Son iguales
+
+ValT<-rbind(val.hc,md.km,md.hk) ## El mismo clustering con varias técnicas
+ValT
+```
+
+Average, ward.D2 y md.hk tiene exactamente el mismo silhouette y wss.
+
+## Para una mejor interpretabilidad hacemos una reducción por componentes principales 
+
+```{r warning=FALSE}
+pr.out=prcomp(ccaa.sc, scale. = T)
+# Varianza explicada
+summary(pr.out)$importance[3,2]
+```
+
+Con la reducción por componenetes principales conseguimos explicar un 77.31% de la varianza.
+
+```{r warning=FALSE}
+# Biplot en plano de componentes
+ggbiplot::ggbiplot(pr.out,labels=rownames(ccaa),
+                   ellipse = TRUE, circle = TRUE)
+```
+
+Vemos que el PC1 tiene mucha carga de variables como Indust, Const, ComHost, Servi o Inmuebles. Por lo tanto en el eje horizontal se están clasificando las CCAA según su infraestructura/desarrollo industrial en el momento de la medición (parte izquierda) frente a el no desarrollo industrial (parte derecha). Vemos que por ejemplo, Baleares es un CA con mucho peso industrial, cantidad de inmuebles, hostelería, servicios, construcción etc. Por lo tanto, vemos que podría ser una CA que todavía tiene capacidad de crecimiento en su construcción. En cambio vemos a Madrid situada en la parte derecha, ya que es una CA con mucho desarrollo, quedando "poco espacio" para la construcción de por ejemplo nuevos inmuebles, comercios de hostelería, servicios etc. es decir, es una CA con infraestructura ya establecida.
+
+Si nos fijamos en el PC2 vemos que tiene una gran influecia de variables como Age4, PobChange o PersInm, pudiendo interpretasarse como una natalidad y cambio poblacional alto, frente a la parte de abajo que representa la presencia de gente más mayor y una natalidad más baja con variables como WomP (muy relacionada con gente de edad avanzada debido a la esperanza de vida de las mujeres) o SCDifProv. Vemos ciudad como Cantabria o Casatilla y León con más población mayor, frente a Madrid que presenta una mayor natalidad y cambio poblacional.
+
+## Ajustamos el cluster jerárquico a la solución de dos componentes
+
+```{r warning=FALSE}
+hc.pr=hclust(dist(pr.out$x[ ,1:2]))
+fviz_dend(hc.pr,k = 4, cex = 0.5, color_labels_by_k = T, rect = T)+
+  ggtitle("Cluster Jerárquico 2 PC")
+cl.hc.pr<-cutree(hc.pr, k = 4) 
+
+km.out.pr=kmeans(pr.out$x[ ,1:2],4)
+fviz_cluster(km.out, data = pr.out$x[ ,1:2], 
+             ggtheme = theme_minimal())
+km.out.pr$centers
+```
+
+### Medidas de validación
+
+```{r warning=FALSE}
+md.km<-medidasVal(pr.out$x[ ,1:2],km.out.pr$cluster,km.out.pr$cluster,'kmeans PCA')
+md.hk<-medidasVal(pr.out$x[ ,1:2],cl.hc.pr,cl.hc.pr,'hclus PCA') 
+
+ValT<-rbind(md.km,md.hk) ## Un poco mejor el k means
+ValT
+```
+
+Md.hk funciona algo mejor, aunque no hay mucha diferencia.
+
+## Conclusión
+
+En conclusión, vemos que el cluester kmedias ha agrupado 4 grupos teniendo el verde (arriba derecha) representado por CCAA con un desarrollo de la insutria y construcción bien establecido y una alta natalidad y cambio poblacional, encontrado CCAA como Madrid o Cataluña. En el grupo rojo (centro) vemos CCAA que se acercan al centro y por tanto serían "neutras" no destacando en ninguna de las variables. En el grupo morado (abajo derecha) vemos CCAA con una buena infraestructura pero una población predominante envejecida, encontrado algunas Cantabria o Castilla y León. Por último en el grupo azul (izquierda) vemos CCAA que aún tienen una gran capacidad de mejora en su infraestructura como baleares o Murcia.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

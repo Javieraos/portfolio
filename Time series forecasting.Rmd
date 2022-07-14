@@ -1,0 +1,194 @@
+---
+title: "Series temporales"
+author: "Javier Aos"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+setwd('G:/My Drive/1.3 Master/Modules/08_Data_mining/TareaII')
+pacman::p_load(readxl, fpp2, tseries, forescast, ggplot2, seasonal, decomposer, TSA)
+```
+
+# Parte 1: Series temporales
+
+## Presentación de la serie a analizar
+
+En esta ocasión vamos a analizar una serie temporal del producto interior bruto (PIB) mundial obtenida de "U.S. Energy Information Administration Data". Contamos con datos mensuales desde el año 2000 hasta el 2021 incluidos.
+
+```{r}
+df <- read.csv(
+  'G:/My Drive/1.3 Master/Modules/08_Data_mining/TareaII/EIA-STEO_RGDPQ_WORLD_M.csv',
+  sep = ",")
+df <- df[order(as.numeric(rownames(df)), decreasing = TRUE),,drop=FALSE]
+gdp_ts <- ts(df$Value, start=c(2000,1), frequency = 12)
+```
+
+## Representación gráfica y descomposición estacional
+
+```{r fig.width=6, fig.height=3.3}
+plot.ts(gdp_ts)
+gdp_desc <- decompose(gdp_ts, type = 'additive')
+plot(gdp_desc)
+```
+
+Podemos ver que la serie presenta una tendencia ascendente lineal con ciertas recesiones en algunos periodos. A priori no hay comportamiento estacional lo cual va a dificultar la predicción.
+
+## Contraste de normalidad de los residuos
+
+```{r}
+ks.test(gdp_desc$random,'pnorm')
+shapiro.test(gdp_desc$random)
+```
+
+Vemos que los residuos no pasan los tests de normalidad.
+
+## Tratamiento de la serie
+
+### Eliminar la heterocedasticidad. Estabilización de la varianza.
+
+```{r}
+gdplog <- log(gdp_ts)
+```
+
+#### Eliminar tendencia
+
+```{r}
+# Eliminar tendencia
+gdp.diff_1<-diff(gdplog)
+```
+
+### Comprobación y corrección de la estacionalidad (Correlogramas)
+
+```{r fig.width=5, fig.height=2}
+library(forecast)
+#Calculamos  las autocorrelaciones simples hasta el retardo 48
+ggAcf(gdp_ts, lag=48) # Decrecimineto lento--> No estacionaria-->diferenciar
+#Calculamos  las autocorrelaciones parciales hasta el retardo 48
+ggPacf(gdp_ts, lag=48)
+```
+
+Vemos que la serie no es estacionaria, por lo tanto, la diferenciamos.
+
+```{r}
+gdp.diff_1_12<-diff(gdp.diff_1, lag = 12)
+```
+
+```{r}
+## Contraste de normalidad de los residuos
+ks.test(gdp.diff_1_12,'pnorm')
+shapiro.test(gdp.diff_1_12)
+```
+
+Sigue sin pasar los tests de normalidad.
+
+## Ventanas de ajuste y evaluación 
+
+```{r}
+gdp_tr<-window(x = gdp_ts, end = c(2020,12))
+gdp_tst<-window(x = gdp_ts, start = c(2021,1))
+```
+
+## Modelos de suavizado exponencial
+
+### Suavizado exponencial simple con predicción a un año
+
+```{r, results='hide'}
+gdp_s1=ses(gdp_tr, h=12)
+```
+
+### Suavizado Exponencial doble de Holt 
+
+```{r, results='hide'}
+gdp_sh <- holt(gdp_tr, h=12)
+```
+
+### Ajuste de modelo
+
+```{r, results='hide'}
+gdp_hw_add <- hw(gdp_tr, h=12,level = c(80, 95))
+gdp_hw_mul <- hw(gdp_tr, h=12, seasonal="multiplicative",level = c(80, 95))
+```
+
+### Predicciones utilizando ETS
+
+```{r}
+ETS_pred<-forecast(gdp_tr,h=12)
+```
+
+## Modelos ARIMA
+
+### Ajuste con la función auto.arima
+
+```{r, results='hide'}
+fitgdp <- auto.arima(gdp_tr,seasonal=TRUE)
+pred <- forecast(fitgdp, h=12)
+```
+
+### Ajuste manual de ARIMA
+
+```{r}
+fitgdp_manual <- gdp_tr %>%  Arima(order=c(1,1,1), seasonal=c(0,0,1))
+pred_manual <- forecast(fitgdp_manual, h=12)
+```
+
+## Se prueba la precisión de las distintas predicciones de los modelos
+
+```{r}
+accuracy(gdp_s1,gdp_tst)
+accuracy(gdp_sh,gdp_tst)
+accuracy(gdp_hw_add,gdp_tst)
+accuracy(gdp_hw_mul,gdp_tst)
+accuracy(ETS_pred,gdp_tst)
+accuracy(pred,gdp_tst)
+accuracy(pred_manual,gdp_tst)
+```
+
+Vemos que la predicción que más se ajusta a los datos test es la del método Holt's (gdp_sh). Por lo tanto lo seleccionamos y ajustamos a los datos totales.
+
+## Representación de la predicción del mejor modelo (Doble Holt)
+
+```{r fig.width=5, fig.height=2}
+#Representamos los valores observados y los suavizados con la predicción 
+autoplot(gdp_sh) +
+  autolayer(fitted(gdp_sh), series="Fitted") +autolayer(gdp_tst, series="actual") +
+  ylab("GDP") + xlab("Mes/Año")
+```
+
+## Ajuste del modelo final a los datos completos y predicción
+
+```{r fig.width=5, fig.height=2.5}
+###  Suavizado Exponencial doble de Holt 
+gdp_sh_total <- holt(gdp_ts, h=12)
+# Inspección del objeto creado y Distribución de residuos
+print(gdp_sh_total)
+gdp_sh_total$model
+autoplot(gdp_sh_total$residuals)
+```
+
+## Representación gráfica de la predicción
+
+```{r fig.width=5, fig.height=2}
+autoplot(gdp_sh_total)+ autolayer(fitted(gdp_sh_total), series="Fitted") +
+  ylab("GDP") + xlab("Year")
+```
+
+## Test de Ljung-Box
+
+```{r}
+forecast::checkresiduals(gdp_sh_total)
+```
+
+A pesar de ser el mejor modelo no pasa el test de Ljung-Box de residuos incorrelados.
+
+## Conclusiones
+
+Parece que ninguno de los modelos es los bastante adecuado como para poder sacar conclusiones y predicciones acertadas. Además, como hemos visto, el mejor modelo no pasa el test de Ljung-Box de residuos incorrelados, por lo que las predicciónes que hagamos no serán precisas. Aún así, con el objetivo de sacar una conclusión final de esta práctica, siguiendo la tendencia y la predicción del suavizado exponencial doble Holt, podemos concluir que el PIB mundial seguirá su tendencia creciente en 2022.
+
+
+

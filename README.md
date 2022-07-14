@@ -7,6 +7,7 @@ Here you can find my work as data scientist. I'm will be adding projects as I le
 
 ## Competitions
 
+* Spaceship titanic = <a href="https://github.com/Javieraos/portfolio/blob/main/01_Initial.ipynb"> here </a>
 * Pump it Up: Data Mining the Water Table = soon
 
 ## Python

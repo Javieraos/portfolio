@@ -16,7 +16,7 @@ Here you can find my work as data scientist. I'm will be adding projects as I le
 
 ## R
 
-* Logistic regression to predict a customer leak = <a href=""> here </a>
+* Logistic regression to predict a customer leak = <a href="https://github.com/Javieraos/portfolio/blob/main/Clients_leak.Rmd"> here </a>
 * Time series forecasting = <a href="https://github.com/Javieraos/portfolio/blob/main/Time%20series%20forecasting.Rmd"> here </a>
 * Dimensionality reduction and clustering: <a href="https://github.com/Javieraos/portfolio/blob/main/Dimensionality%20reduction%20and%20clustering.Rmd"> here </a>
 
@@ -30,4 +30,4 @@ Here you can find my work as data scientist. I'm will be adding projects as I le
 
 ## MongoDB
 
-* What make a film a good film? = <a href=""> here </a>
+* What make a film a good film? = <a href="https://github.com/Javieraos/portfolio/blob/main/movies_query.js"> here </a>
